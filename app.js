@@ -109,7 +109,7 @@ function renderGate() {
     <div class="gate">
       <div class="gate-box">
         <div class="gate-mark" aria-hidden="true">&#9776;</div>
-        <h1>你是否有课程学习登记需求？</h1>
+        <h1>你是否有学习通课程预约需求？</h1>
         <div class="gate-buttons">
           <button class="btn yes-btn" id="yes-btn">Yes</button>
           <button class="btn no-btn" id="no-btn">No</button>
@@ -244,7 +244,7 @@ function courseRows() {
 async function userRegistrations() {
   const { data, error } = await supabase
     .from("registrations")
-    .select("id, course_count, exam_count, amount, payment_status, created_at, registration_courses(course_name)")
+    .select("id, course_count, exam_count, exam_note, amount, payment_status, created_at, registration_courses(course_name)")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data;
@@ -253,7 +253,7 @@ async function userRegistrations() {
 async function userRegistration(id) {
   const { data, error } = await supabase
     .from("registrations")
-    .select("id, course_count, exam_count, amount, payment_status, created_at, registration_courses(course_name)")
+    .select("id, course_count, exam_count, exam_note, amount, payment_status, created_at, registration_courses(course_name)")
     .eq("id", id)
     .single();
   if (error) throw error;
@@ -296,6 +296,7 @@ function orderCard(registration) {
     <div class="order-card-head"><div><h2>${money(registration.amount)}</h2><p class="tiny">${new Date(registration.created_at).toLocaleString("zh-CN")}</p></div><span class="pill ${statusClass(registration.payment_status)}">${statusLabel(registration.payment_status)}</span></div>
     <p class="order-courses">${courses}</p>
     <p class="hint">${registration.course_count} 门课程，${registration.exam_count} 个考试</p>
+    ${registration.exam_note ? `<p class="exam-note"><strong>考试备注：</strong>${escapeHtml(registration.exam_note)}</p>` : ""}
     ${statusSteps(registration.payment_status)}
     ${action ? `<div class="row">${action}</div>` : ""}
   </article>`;
@@ -314,7 +315,7 @@ async function renderApp() {
   app.innerHTML = '<section><p class="hint">正在加载...</p></section>';
   try {
     app.innerHTML = `
-      <section><h1>登记课程</h1><form id="registration-form"><div id="course-rows">${courseRows()}</div><div class="row"><button class="btn btn-muted" type="button" id="add-course">添加课程</button></div><div style="max-width:360px"><label for="exam-count">考试个数</label><input id="exam-count" name="examCount" type="number" min="0" max="100" step="1" value="0" required></div><div class="row" style="margin-top:14px"><button class="btn btn-primary" type="submit">提交登记</button></div></form><div id="registration-message" class="hidden"></div></section>`;
+      <section><h1>登记课程</h1><form id="registration-form"><div id="course-rows">${courseRows()}</div><div class="row"><button class="btn btn-muted" type="button" id="add-course">添加课程</button></div><div style="max-width:360px"><label for="exam-count">考试个数</label><input id="exam-count" name="examCount" type="number" min="0" max="100" step="1" value="0" required></div><p class="hint">PS：若是课程与考试不一致，请备注具体考试名称。</p><div style="max-width:560px"><label for="exam-note">考试备注</label><textarea id="exam-note" name="examNote" maxlength="200" placeholder="例如：课程 A 对应考试 B"></textarea></div><div class="row" style="margin-top:14px"><button class="btn btn-primary" type="submit">提交登记</button></div></form><div id="registration-message" class="hidden"></div></section>`;
     bindRegistrationForm();
   } catch (error) {
     app.innerHTML = `<section>${showMessage("error", error.message)}</section>`;
@@ -337,7 +338,7 @@ async function renderOrders() {
 
 function renderPayment(registration, submitted = false) {
   app.innerHTML = `
-    <section><h1>${submitted ? "已提交" : "付款信息"}</h1>${submitted ? '<p>你可退出该网站，随后会通知你。</p>' : '<p class="hint">请扫码付款，付款后点击“我已付款”。</p>'}${paymentBox(registration)}<div class="row" style="margin-top:16px"><a class="btn btn-muted" href="#app">返回我的登记</a></div></section>`;
+    <section><h1>${submitted ? "已提交" : "付款信息"}</h1>${submitted ? '<p>感谢支持！你可退出该网站，随后会通知你。</p>' : '<p class="hint">请扫码付款，付款后点击“我已付款”。</p>'}${paymentBox(registration)}<div class="row" style="margin-top:16px"><a class="btn btn-muted" href="#app">返回我的登记</a></div></section>`;
   bindPaymentButton();
 }
 
@@ -387,6 +388,7 @@ function bindRegistrationForm() {
     const form = new FormData(event.currentTarget);
     const courses = form.getAll("courseName").map((value) => value.trim()).filter(Boolean);
     const examCount = Number(form.get("examCount"));
+    const examNote = form.get("examNote").trim();
     const message = document.querySelector("#registration-message");
     const button = event.currentTarget.querySelector("button[type=submit]");
     if (!courses.length || !Number.isInteger(examCount) || examCount < 0) {
@@ -395,7 +397,7 @@ function bindRegistrationForm() {
       return;
     }
     buttonLoading(button, true);
-    const { data: registrationId, error } = await supabase.rpc("create_registration", { course_names: courses, input_exam_count: examCount });
+    const { data: registrationId, error } = await supabase.rpc("create_registration", { course_names: courses, input_exam_count: examCount, input_exam_note: examNote });
     buttonLoading(button, false);
     if (error) {
       message.className = "error";
@@ -406,6 +408,7 @@ function bindRegistrationForm() {
       id: registrationId,
       course_count: courses.length,
       exam_count: examCount,
+      exam_note: examNote,
       amount: courses.length * 1.5 + examCount * 0.5,
       payment_status: "waiting_payment",
     };
@@ -432,7 +435,7 @@ function bindPaymentButton() {
 async function adminRegistrations() {
   const { data, error } = await supabase
     .from("registrations")
-    .select("id, course_count, exam_count, amount, payment_status, created_at, profiles(name, username, special_number), registration_courses(course_name)")
+    .select("id, course_count, exam_count, exam_note, amount, payment_status, created_at, profiles(name, username, special_number), registration_courses(course_name)")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data;
@@ -465,7 +468,7 @@ function adminAction(item) {
 
 function adminTable(registrations) {
   if (!registrations.length) return '<p class="hint">没有符合条件的登记。</p>';
-  return `<div class="table-wrap"><table><thead><tr><th>用户</th><th>课程</th><th>考试</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>${registrations.map((item) => `<tr><td>${escapeHtml(item.profiles?.name)}<br><span class="tiny">${escapeHtml(item.profiles?.username)} / ${escapeHtml(item.profiles?.special_number)}</span></td><td>${item.registration_courses.map((course) => escapeHtml(course.course_name)).join("<br>")}</td><td>${item.exam_count}</td><td>${money(item.amount)}</td><td><span class="pill ${statusClass(item.payment_status)}">${statusLabel(item.payment_status)}</span></td><td>${adminAction(item)}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>用户</th><th>课程</th><th>考试</th><th>考试备注</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>${registrations.map((item) => `<tr><td>${escapeHtml(item.profiles?.name)}<br><span class="tiny">${escapeHtml(item.profiles?.username)} / ${escapeHtml(item.profiles?.special_number)}</span></td><td>${item.registration_courses.map((course) => escapeHtml(course.course_name)).join("<br>")}</td><td>${item.exam_count}</td><td>${escapeHtml(item.exam_note || "-")}</td><td>${money(item.amount)}</td><td><span class="pill ${statusClass(item.payment_status)}">${statusLabel(item.payment_status)}</span></td><td>${adminAction(item)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function bindAdminControls(registrations) {
