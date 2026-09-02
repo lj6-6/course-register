@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = "https://yajajcnqxdexfumglxow.supabase.co";
 const SUPABASE_KEY = "sb_publishable_AcPSpttHTHxg_A0pW1qaTA_86xvoNvD";
-const QR_CODE_IMAGE = "";
+const QR_CODE_IMAGE = "wechat-qr.png";
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const app = document.querySelector("#app");
 const nav = document.querySelector("#nav");
