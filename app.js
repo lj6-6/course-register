@@ -9,6 +9,7 @@ const nav = document.querySelector("#nav");
 
 let session = null;
 let profile = null;
+let paymentPreview = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -70,7 +71,8 @@ function setNav() {
     await supabase.auth.signOut();
     session = null;
     profile = null;
-    go("home");
+    paymentPreview = null;
+    go("login");
   });
 }
 
@@ -243,6 +245,16 @@ async function userRegistrations() {
   return data;
 }
 
+async function userRegistration(id) {
+  const { data, error } = await supabase
+    .from("registrations")
+    .select("id, course_count, exam_count, amount, payment_status, created_at, registration_courses(course_name)")
+    .eq("id", id)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 function paymentBox(registration) {
   if (!registration) return '<p class="hint">你还没有登记过。</p>';
   const action = registration.payment_status === "waiting_payment"
@@ -289,6 +301,34 @@ async function renderApp() {
   }
 }
 
+function renderPayment(registration, submitted = false) {
+  app.innerHTML = `
+    <section><h1>${submitted ? "已提交" : "付款信息"}</h1>${submitted ? '<p>你可退出该网站，随后会通知你。</p>' : '<p class="hint">请扫码付款，付款后点击“我已付款”。</p>'}${paymentBox(registration)}<div class="row" style="margin-top:16px"><a class="btn btn-muted" href="#app">返回我的登记</a></div></section>`;
+  bindPaymentButton();
+}
+
+async function loadPayment(id) {
+  try {
+    const registration = await userRegistration(id);
+    if (route() !== `payment/${id}`) return;
+    paymentPreview = registration;
+    renderPayment(registration);
+  } catch (error) {
+    if (route() === `payment/${id}`) app.innerHTML = `<section>${showMessage("error", error.message)}</section>`;
+  }
+}
+
+function renderPaymentPage(id) {
+  if (!session) {
+    go("login");
+    return;
+  }
+  const preview = paymentPreview?.id === id ? paymentPreview : null;
+  if (preview) renderPayment(preview);
+  else app.innerHTML = '<section><p class="hint">正在加载付款信息...</p></section>';
+  loadPayment(id);
+}
+
 function bindRegistrationForm() {
   const rows = document.querySelector("#course-rows");
   const addCourse = document.querySelector("#add-course");
@@ -321,14 +361,21 @@ function bindRegistrationForm() {
       return;
     }
     buttonLoading(button, true);
-    const { error } = await supabase.rpc("create_registration", { course_names: courses, input_exam_count: examCount });
+    const { data: registrationId, error } = await supabase.rpc("create_registration", { course_names: courses, input_exam_count: examCount });
     buttonLoading(button, false);
     if (error) {
       message.className = "error";
       message.innerHTML = errorMessage(error);
       return;
     }
-    await renderApp();
+    paymentPreview = {
+      id: registrationId,
+      course_count: courses.length,
+      exam_count: examCount,
+      amount: courses.length * 1.5 + examCount * 0.5,
+      payment_status: "waiting_payment",
+    };
+    go(`payment/${registrationId}`);
   });
 }
 
@@ -343,7 +390,8 @@ function bindPaymentButton() {
       alert(error.message);
       return;
     }
-    app.innerHTML = `<section><h1>已提交</h1><p>你可退出该网站，随后会通知你。</p><a class="btn btn-primary" href="#app">返回我的登记</a></section>`;
+    paymentPreview = { ...paymentPreview, id: button.dataset.paid, payment_status: "pending_review" };
+    renderPayment(paymentPreview, true);
   });
 }
 
@@ -399,6 +447,7 @@ async function render() {
   else if (currentRoute === "login") renderLogin();
   else if (currentRoute === "admin-login") renderLogin(true);
   else if (currentRoute === "app") await renderApp();
+  else if (currentRoute.startsWith("payment/")) renderPaymentPage(currentRoute.slice(8));
   else if (currentRoute === "admin") await renderAdmin();
   else go("home");
 }
