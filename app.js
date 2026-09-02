@@ -409,7 +409,7 @@ function bindRegistrationForm() {
       course_count: courses.length,
       exam_count: examCount,
       exam_note: examNote,
-      amount: courses.length * 1.5 + examCount * 0.5,
+      amount: courses.length * 2.5 + examCount,
       payment_status: "waiting_payment",
     };
     go(`payment/${registrationId}`);
