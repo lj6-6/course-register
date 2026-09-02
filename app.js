@@ -48,6 +48,8 @@ function statusLabel(status) {
     waiting_payment: "待付款",
     pending_review: "待确认",
     paid: "已支付",
+    processing: "处理中",
+    completed: "已完成",
     rejected: "已拒绝",
   }[status] || "未知";
 }
@@ -57,6 +59,8 @@ function statusClass(status) {
     waiting_payment: "wait",
     pending_review: "review",
     paid: "ok",
+    processing: "processing",
+    completed: "done",
     rejected: "bad",
   }[status] || "wait";
 }
@@ -66,7 +70,7 @@ function setNav() {
     nav.innerHTML = '<a href="#login">登录</a><a href="#register">注册</a><a href="#admin-login">管理员入口</a>';
     return;
   }
-  nav.innerHTML = `<a href="#app">我的登记</a>${profile?.is_admin ? '<a href="#admin">后台</a>' : ""}<button type="button" id="logout">退出</button>`;
+  nav.innerHTML = `<a href="#app">登记课程</a><a href="#orders">我的订单</a>${profile?.is_admin ? '<a href="#admin">后台</a>' : ""}<button type="button" id="logout">退出</button>`;
   document.querySelector("#logout").addEventListener("click", async () => {
     await supabase.auth.signOut();
     session = null;
@@ -104,6 +108,7 @@ function renderGate() {
   app.innerHTML = `
     <div class="gate">
       <div class="gate-box">
+        <div class="gate-mark" aria-hidden="true">&#9776;</div>
         <h1>你是否有课程学习登记需求？</h1>
         <div class="gate-buttons">
           <button class="btn yes-btn" id="yes-btn">Yes</button>
@@ -129,7 +134,7 @@ function renderRegister() {
       <form id="register-form" class="grid two">
         <div><label for="name">姓名</label><input id="name" name="name" autocomplete="name" maxlength="40" required></div>
         <div><label for="username">用户名</label><input id="username" name="username" autocomplete="username" maxlength="40" required></div>
-        <div><label for="special-number">特殊数字</label><input id="special-number" name="specialNumber" maxlength="40" required></div>
+        <div><label for="special-number">订单识别码</label><input id="special-number" name="specialNumber" maxlength="40" required></div>
         <div><label for="password">密码</label><input id="password" type="password" name="password" autocomplete="new-password" minlength="6" required></div>
         <div><label for="confirm-password">确认密码</label><input id="confirm-password" type="password" name="confirmPassword" autocomplete="new-password" minlength="6" required></div>
         <div class="row"><button class="btn btn-primary" type="submit">创建账号</button></div>
@@ -267,7 +272,7 @@ function paymentBox(registration) {
     <div class="summary">
       <div><strong>课程数：</strong>${registration.course_count}</div>
       <div><strong>考试数：</strong>${registration.exam_count}</div>
-      <div><strong>金额：</strong>${money(registration.amount)}</div>
+      <div class="payment-total">${money(registration.amount)}</div>
       <div><strong>状态：</strong><span class="pill ${statusClass(registration.payment_status)}">${statusLabel(registration.payment_status)}</span></div>
       ${action}
     </div>
@@ -275,10 +280,30 @@ function paymentBox(registration) {
   </div>`;
 }
 
-function historyTable(registrations) {
+function statusSteps(status) {
+  if (status === "rejected") return '<div class="order-rejected">该订单未通过确认，请联系管理员。</div>';
+  const steps = ["waiting_payment", "pending_review", "paid", "processing", "completed"];
+  const active = Math.max(0, steps.indexOf(status));
+  return `<div class="status-steps">${steps.map((step, index) => `<div class="status-step ${index <= active ? "active" : ""} ${index === active ? "current" : ""}"><span>${index + 1}</span><small>${statusLabel(step)}</small></div>`).join("")}</div>`;
+}
+
+function orderCard(registration) {
+  const courses = registration.registration_courses.map((course) => escapeHtml(course.course_name)).join("、");
+  const action = registration.payment_status === "waiting_payment"
+    ? `<a class="btn btn-primary" href="#payment/${registration.id}">去付款</a>`
+    : "";
+  return `<article class="order-card">
+    <div class="order-card-head"><div><h2>${money(registration.amount)}</h2><p class="tiny">${new Date(registration.created_at).toLocaleString("zh-CN")}</p></div><span class="pill ${statusClass(registration.payment_status)}">${statusLabel(registration.payment_status)}</span></div>
+    <p class="order-courses">${courses}</p>
+    <p class="hint">${registration.course_count} 门课程，${registration.exam_count} 个考试</p>
+    ${statusSteps(registration.payment_status)}
+    ${action ? `<div class="row">${action}</div>` : ""}
+  </article>`;
+}
+
+function orderList(registrations) {
   if (!registrations.length) return '<p class="hint">暂无记录。</p>';
-  return `<div class="table-wrap"><table><thead><tr><th>时间</th><th>课程</th><th>考试数</th><th>金额</th><th>状态</th></tr></thead><tbody>${registrations.map((item) => `
-    <tr><td>${new Date(item.created_at).toLocaleString("zh-CN")}</td><td>${item.registration_courses.map((course) => escapeHtml(course.course_name)).join("<br>")}</td><td>${item.exam_count}</td><td>${money(item.amount)}</td><td><span class="pill ${statusClass(item.payment_status)}">${statusLabel(item.payment_status)}</span></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="order-list">${registrations.map(orderCard).join("")}</div>`;
 }
 
 async function renderApp() {
@@ -288,14 +313,23 @@ async function renderApp() {
   }
   app.innerHTML = '<section><p class="hint">正在加载...</p></section>';
   try {
-    const registrations = await userRegistrations();
     app.innerHTML = `
-      <section><h1>我的登记</h1><div class="grid three"><div><strong>姓名</strong><div>${escapeHtml(profile.name)}</div></div><div><strong>用户名</strong><div>${escapeHtml(profile.username)}</div></div><div><strong>特殊数字</strong><div>${escapeHtml(profile.special_number)}</div></div></div></section>
-      <section><h2>新增登记</h2><form id="registration-form"><div id="course-rows">${courseRows()}</div><div class="row"><button class="btn btn-muted" type="button" id="add-course">添加课程</button></div><div style="max-width:360px"><label for="exam-count">考试个数</label><input id="exam-count" name="examCount" type="number" min="0" max="100" step="1" value="0" required></div><div class="row" style="margin-top:14px"><button class="btn btn-primary" type="submit">提交登记</button></div></form><div id="registration-message" class="hidden"></div></section>
-      <section><h2>最近一笔</h2>${paymentBox(registrations[0])}</section>
-      <section><h2>我的历史记录</h2>${historyTable(registrations)}</section>`;
+      <section><h1>登记课程</h1><form id="registration-form"><div id="course-rows">${courseRows()}</div><div class="row"><button class="btn btn-muted" type="button" id="add-course">添加课程</button></div><div style="max-width:360px"><label for="exam-count">考试个数</label><input id="exam-count" name="examCount" type="number" min="0" max="100" step="1" value="0" required></div><div class="row" style="margin-top:14px"><button class="btn btn-primary" type="submit">提交登记</button></div></form><div id="registration-message" class="hidden"></div></section>`;
     bindRegistrationForm();
-    bindPaymentButton();
+  } catch (error) {
+    app.innerHTML = `<section>${showMessage("error", error.message)}</section>`;
+  }
+}
+
+async function renderOrders() {
+  if (!session) {
+    go("login");
+    return;
+  }
+  app.innerHTML = '<section><p class="hint">正在加载订单...</p></section>';
+  try {
+    const registrations = await userRegistrations();
+    app.innerHTML = `<section><h1>我的订单</h1><p class="hint">可在这里查看每笔订单的当前进度。</p>${orderList(registrations)}</section>`;
   } catch (error) {
     app.innerHTML = `<section>${showMessage("error", error.message)}</section>`;
   }
@@ -413,15 +447,38 @@ async function adminProfiles() {
   return data;
 }
 
-async function renderAdmin() {
-  if (!session || !profile?.is_admin) {
-    go("admin-login");
-    return;
-  }
-  app.innerHTML = '<section><p class="hint">正在加载...</p></section>';
-  try {
-    const [registrations, users] = await Promise.all([adminRegistrations(), adminProfiles()]);
-    app.innerHTML = `<section><h1>后台管理</h1></section><section><h2>用户列表</h2>${users.length ? `<div class="table-wrap"><table><thead><tr><th>姓名</th><th>用户名</th><th>特殊数字</th><th>注册时间</th></tr></thead><tbody>${users.map((user) => `<tr><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.username)}</td><td>${escapeHtml(user.special_number)}</td><td>${new Date(user.created_at).toLocaleString("zh-CN")}</td></tr>`).join("")}</tbody></table></div>` : '<p class="hint">暂无用户。</p>'}</section><section><h2>登记记录</h2>${registrations.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>课程</th><th>考试</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>${registrations.map((item) => `<tr><td>${escapeHtml(item.profiles.name)}<br><span class="tiny">${escapeHtml(item.profiles.username)} / ${escapeHtml(item.profiles.special_number)}</span></td><td>${item.registration_courses.map((course) => escapeHtml(course.course_name)).join("<br>")}</td><td>${item.exam_count}</td><td>${money(item.amount)}</td><td><span class="pill ${statusClass(item.payment_status)}">${statusLabel(item.payment_status)}</span></td><td>${item.payment_status === "pending_review" ? `<div class="row"><button class="btn btn-primary" data-status="paid" data-id="${item.id}">设为已支付</button><button class="btn btn-danger" data-status="rejected" data-id="${item.id}">拒绝</button></div>` : '<span class="tiny">无需操作</span>'}</td></tr>`).join("")}</tbody></table></div>` : '<p class="hint">暂无登记。</p>'}</section>`;
+function adminStats(registrations) {
+  const count = (status) => registrations.filter((item) => item.payment_status === status).length;
+  const today = new Date().toDateString();
+  const todayAmount = registrations
+    .filter((item) => new Date(item.created_at).toDateString() === today)
+    .reduce((total, item) => total + Number(item.amount), 0);
+  return `<div class="stats-grid"><div class="stat"><span>待付款</span><strong>${count("waiting_payment")}</strong></div><div class="stat"><span>待确认</span><strong>${count("pending_review")}</strong></div><div class="stat"><span>已支付</span><strong>${count("paid")}</strong></div><div class="stat"><span>今日登记金额</span><strong>${money(todayAmount)}</strong></div></div>`;
+}
+
+function adminAction(item) {
+  if (item.payment_status === "pending_review") return `<div class="admin-actions"><button class="btn btn-primary" data-status="paid" data-id="${item.id}">确认已支付</button><button class="btn btn-danger" data-status="rejected" data-id="${item.id}">拒绝付款</button></div>`;
+  if (item.payment_status === "paid") return `<div class="admin-actions"><button class="btn btn-primary" data-status="processing" data-id="${item.id}">开始处理</button></div>`;
+  if (item.payment_status === "processing") return `<div class="admin-actions"><button class="btn btn-primary" data-status="completed" data-id="${item.id}">设为已完成</button></div>`;
+  return '<span class="tiny">无需操作</span>';
+}
+
+function adminTable(registrations) {
+  if (!registrations.length) return '<p class="hint">没有符合条件的登记。</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>用户</th><th>课程</th><th>考试</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>${registrations.map((item) => `<tr><td>${escapeHtml(item.profiles?.name)}<br><span class="tiny">${escapeHtml(item.profiles?.username)} / ${escapeHtml(item.profiles?.special_number)}</span></td><td>${item.registration_courses.map((course) => escapeHtml(course.course_name)).join("<br>")}</td><td>${item.exam_count}</td><td>${money(item.amount)}</td><td><span class="pill ${statusClass(item.payment_status)}">${statusLabel(item.payment_status)}</span></td><td>${adminAction(item)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function bindAdminControls(registrations) {
+  const search = document.querySelector("#admin-search");
+  const filter = document.querySelector("#admin-filter");
+  const refresh = () => {
+    const keyword = search.value.trim().toLowerCase();
+    const filtered = registrations.filter((item) => {
+      const text = [item.profiles?.name, item.profiles?.username, item.registration_courses.map((course) => course.course_name).join(" ")].join(" ").toLowerCase();
+      return (!keyword || text.includes(keyword)) && (filter.value === "all" || item.payment_status === filter.value);
+    });
+    document.querySelector("#admin-stats").innerHTML = adminStats(registrations);
+    document.querySelector("#admin-results").innerHTML = adminTable(filtered);
     document.querySelectorAll("[data-status]").forEach((button) => {
       button.addEventListener("click", async () => {
         buttonLoading(button, true);
@@ -431,9 +488,26 @@ async function renderAdmin() {
           alert(error.message);
           return;
         }
-        await renderAdmin();
+        registrations.find((item) => item.id === button.dataset.id).payment_status = button.dataset.status;
+        refresh();
       });
     });
+  };
+  search.addEventListener("input", refresh);
+  filter.addEventListener("change", refresh);
+  refresh();
+}
+
+async function renderAdmin() {
+  if (!session || !profile?.is_admin) {
+    go("admin-login");
+    return;
+  }
+  app.innerHTML = '<section><p class="hint">正在加载...</p></section>';
+  try {
+    const [registrations, users] = await Promise.all([adminRegistrations(), adminProfiles()]);
+    app.innerHTML = `<section><h1>后台管理</h1><div id="admin-stats"></div></section><section><h2>登记记录</h2><div class="admin-filter"><input id="admin-search" type="search" placeholder="搜索姓名、用户名或课程"><select id="admin-filter"><option value="all">全部状态</option><option value="pending_review" selected>待确认</option><option value="waiting_payment">待付款</option><option value="paid">已支付</option><option value="processing">处理中</option><option value="completed">已完成</option><option value="rejected">已拒绝</option></select></div><div id="admin-results"></div></section><section><h2>用户列表</h2>${users.length ? `<div class="table-wrap"><table><thead><tr><th>姓名</th><th>用户名</th><th>订单识别码</th><th>注册时间</th></tr></thead><tbody>${users.map((user) => `<tr><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.username)}</td><td>${escapeHtml(user.special_number)}</td><td>${new Date(user.created_at).toLocaleString("zh-CN")}</td></tr>`).join("")}</tbody></table></div>` : '<p class="hint">暂无用户。</p>'}</section>`;
+    bindAdminControls(registrations);
   } catch (error) {
     app.innerHTML = `<section>${showMessage("error", error.message)}</section>`;
   }
@@ -447,6 +521,7 @@ async function render() {
   else if (currentRoute === "login") renderLogin();
   else if (currentRoute === "admin-login") renderLogin(true);
   else if (currentRoute === "app") await renderApp();
+  else if (currentRoute === "orders") await renderOrders();
   else if (currentRoute.startsWith("payment/")) renderPaymentPage(currentRoute.slice(8));
   else if (currentRoute === "admin") await renderAdmin();
   else go("home");
